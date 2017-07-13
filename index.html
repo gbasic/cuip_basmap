@@ -1,0 +1,413 @@
+<!doctype html>
+<!--
+    Tangram: real-time WebGL rendering for OpenStreetMap
+
+    http://github.com/tangrams/tangram
+    http://mapzen.com
+-->
+<html lang="en-us">
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+
+    <title>Refill</title>
+
+    <!-- 3rd party libraries -->
+        <!-- Leaflet -->
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.0.1/leaflet.css" />
+        <script type="text/javascript" src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.0.1/leaflet.js"></script>
+        <!-- bog-standard leaflet URL hash -->
+        <script type="text/javascript" src="https://cdn.rawgit.com/mlevans/leaflet-hash/master/leaflet-hash.js"></script>
+
+        <!-- Main tangram library -->
+        <!-- production -->
+        <script src="https://mapzen.com/tangram/0.12/tangram.min.js"></script>
+        <!-- production debug -->
+        <!-- <script src="https://mapzen.com/tangram/0.12/tangram.debug.js"></script> -->
+        <!-- dev -->
+        <!-- <script src="https://precog.mapzen.com/tangrams/tangram/master/dist/tangram.debug.js"></script> -->
+        <!-- dev branch -->
+        <!-- <script src="https://precog.mapzen.com/tangrams/tangram/placement-min-ratio/dist/tangram.debug.js"></script> -->
+
+        <!-- A lightweight graphical user interface for changing variables in JavaScript.  -->
+
+        <!-- FileSaver.js implements the HTML5 W3C saveAs(), used in the demo to save screenshots -->
+
+        <!-- Keymaster handles keyboard input -->
+        <script type="text/javascript" src="lib/keymaster.js"></script>
+    <!-- End of 3rd party libraries -->
+
+    <style>
+        body {
+            margin: 0px;
+            border: 0px;
+            padding: 0px;
+        }
+
+        #map {
+            background: rgba(0, 0, 0, 0);
+            height: 100%;
+            width: 100%;
+            position: absolute;
+        }
+
+        .label {
+            width: auto;
+            /*margin-left: -100px;*/
+            position: absolute;
+            z-index: 500;
+            text-align: left;
+            margin: 10px;
+            /*background: #E1E1E1;*/
+            background: rgba(3,3,3,0.6);
+            opacity: 0.9;
+            padding: 2px;
+            visibility: hidden;
+            /*text-shadow: -1px 0 black, 0 1px black, 1px 0 black, 0 -1px black;*/
+            /*word-wrap: break-word;*/
+        }
+        .label a {
+            color: white;
+        }
+
+        .label a:hover {
+            color: lightblue;
+        }
+
+        .labelInner {
+            padding: 3px 0px;
+            font-family: Helvetica, sans-serif;
+            font-weight: bold;
+            font-size: 12px;
+            color: white;
+            opacity: 2.0;
+            margin: 0px;
+        }
+
+        .labelLine {
+            /*border: 2px solid gold;*/
+        }
+
+        .labelLine:hover {
+            /* border: 2px solid gold; */
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            -khtml-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            cursor: default;
+        }
+
+        .title {
+            text-align: center;
+            font-weight: bold;
+            color: white;
+            margin-left: 6px;
+        }
+
+        hr {
+            border: 0;
+            height: 1px;
+            background: rgba(255,255,255,0.5);
+        }
+
+        .coorner {
+            position: absolute;
+            background-color: rgba(255,255,255,0.0);
+            width: 10px;
+            height: 10px;
+            z-index: 103;
+        }
+
+        div#coorner-top-left {
+            top: -2px;
+            left: -2px;
+            border-top: 2px solid rgba(255,255,255,0.7);
+            border-left: 2px solid rgba(255,255,255,0.7);
+        }
+
+        div#coorner-top-right {
+            top: -2px;
+            right: -2px;
+            border-top: 2px solid rgba(255,255,255,0.7);
+            border-right: 2px solid rgba(255,255,255,0.7);
+        }
+
+        div#coorner-bottom-left {
+            bottom: -2px;
+            left: -2px;
+            border-bottom: 2px solid rgba(255,255,255,0.7);
+            border-left: 2px solid rgba(255,255,255,0.7);
+        }
+
+        div#coorner-bottom-right {
+            bottom: -2px;
+            right: -2px;
+            border-bottom: 2px solid rgba(255,255,255,0.7);
+            border-right: 2px solid rgba(255,255,255,0.7);
+        }
+    </style>
+</head>
+
+    <body>
+        <div class="label" id="popup"></div>
+        <div id="map"></div>
+
+
+        <!-- Demo module -->
+        <script>
+
+        /*** URL parsing ***/
+
+        var animated = true;
+        var url_search = window.location.search.slice(1);
+        if (url_search.length > 0) {
+            if (url_search.indexOf('animated=false') > -1) {
+                animated = false;
+            }
+        }
+
+        // location
+        var url_hash = window.location.hash.slice(1).split('/'); // map location as #z/x/y
+        var map_start_location = [31.9317289, 35.9184751        , 14]; // Amman
+        var defaultpos = true; // use default position
+
+        // location is passed through url
+        if (url_hash.length == 3) {
+            var defaultpos = false;
+            if (url_hash[1] > 180) { // parse hash as tile coordinates
+                // example: http://localhost:9001/#15/5242/12663
+                // add .5 to coords to center tile on screen
+                map_start_location = [tile2lat(parseFloat(url_hash[2]) + .5, url_hash[0]), tile2long(parseFloat(url_hash[1]) + .5, url_hash[0]), url_hash[0]];
+            }
+            else { // parse hash as lat/lng coordinates
+                map_start_location = [url_hash[1],url_hash[2], url_hash[0]];
+                // convert from strings
+                map_start_location = map_start_location.map(Number);
+            }
+        }
+
+        // enable setting language by URL argument
+        // eg: '?language=en&this=no'
+
+        var query = splitQueryParams();
+        // { language: 'en', this: 'no'}
+
+        function splitQueryParams () {
+           var str = window.location.search;
+
+           var kvArray = str.slice(1).split('&');
+           // ['language=en', 'this=no']
+
+           var obj = {};
+
+           for (var i = 0, j=kvArray.length; i<j; i++) {
+               var value = kvArray[i].split('=');
+               var k = window.decodeURIComponent(value[0]);
+               var v = window.decodeURIComponent(value[1]);
+
+               obj[k] = v;
+           }
+
+           return obj;
+        }
+
+        /*** Map ***/
+
+        var map = L.map('map',
+            {"keyboardZoomOffset" : .05, maxZoom: 20, "scrollWheelZoom": false }
+        );
+        map.setView(map_start_location.slice(0, 2), map_start_location[2]);
+
+        var tg_baseScene = 'refill-style.yaml';
+
+        var dev_or_prod = 'prod';
+        // prod
+        var mapzen_api_key = 'mapzen-tDHBHDp';
+
+
+        var tg_global = { sdk_mapzen_api_key: mapzen_api_key };
+
+        var layer = Tangram.leafletLayer({
+            // more: 'vector-tiles-TTucZYU'
+            // default (some): 'vector-tiles-W2tPU-Y'
+            // no: 'vector-tiles-haXTO7g'
+            scene: { import: [tg_baseScene, 'themes/black.yaml'], global: tg_global },
+            attribution: '<a href="https://mapzen.com/tangram" target="_blank">Tangram</a>, &copy; OSM contributors'
+        });
+
+        var scene = layer.scene;
+        var latlng = {};
+        var popup = document.getElementById('popup'); // click-popup
+        var hash = new L.Hash(map);
+
+        function updateKey(value) {
+            keytext = value;
+
+            for (layer in scene.config.layers) {
+                if (layer == "earth") continue;
+                scene.config.layers[layer].properties.key_text = value;
+            }
+            scene.rebuildGeometry();
+            scene.requestRedraw();
+        }
+
+        function updateValue(value) {
+            valuetext = value;
+
+            for (layer in scene.config.layers) {
+                if (layer == "earth") continue;
+                scene.config.layers[layer].properties.value_text = value;
+            }
+            scene.rebuildGeometry();
+            scene.requestRedraw();
+        }
+
+        window.addEventListener('load', function () {
+            // Scene initialized
+            layer.scene.subscribe({
+                load: function (data) {
+                    data.config.global.sdk_animated = animated;
+                }
+            });
+            layer.addTo(map);
+        });
+
+        // Feature selection
+        var picking = false;
+        function initFeatureSelection () {
+            layer.setSelectionEvents({
+                hover: function(selection) {
+                    if (!picking) {
+                        if (!selection || selection.feature == null || selection.feature.properties == null) {
+                            picking = false;
+                            popup.style.visibility = 'hidden';
+                            return;
+                        }
+
+                        var properties = selection.feature.properties;
+                        popup.style.width = 'auto';
+                        popup.style.left = (selection.pixel.x + 0) + 'px';
+                        popup.style.top = (selection.pixel.y + 0) + 'px';
+                        popup.style.margin = '10px';
+                        if (properties.name) {
+                            popup.innerHTML = '<span class="labelInner">' + properties.name + '</span><br>';
+                        } else {
+                            popup.innerHTML = '<span class="labelInner">' + 'unnamed ' + properties.kind + '</span><br>';
+                        }
+                        popup.innerHTML += '<span class="labelInner" style="font-size:10px;">' + 'Click to view more...' + '</span><br>';
+                        popup.style.visibility = 'visible';
+                    }
+                }
+            });
+        }
+
+        function createEditLinkElement (url, type, label) {
+            var el = document.createElement('div');
+            var anchor = document.createElement('a');
+            el.className = 'labelInner';
+            anchor.href = url;
+            anchor.target = '_blank';
+            anchor.textContent = label;
+            anchor.addEventListener('click', function (event) {
+                trackOutboundLink(url, 'mapzen_carto_debug', type);
+            }, false);
+            el.appendChild(anchor);
+            return el;
+        }
+
+        /**
+        * Function that tracks a click on an outbound link in Google Analytics.
+        * This function takes a valid URL string as an argument, and uses that URL string
+        * as the event label. Setting the transport method to 'beacon' lets the hit be sent
+        * using 'navigator.sendBeacon' in browser that support it.
+        */
+        function trackOutboundLink (url, post_name, editor) {
+           // ga('send', 'event', [eventCategory], [eventAction], [eventLabel], [eventValue], [fieldsObject]);
+           ga('send', 'event', 'outbound', post_name, url, {
+             'transport': 'beacon',
+             // If opening a link in the current window, this opens the url AFTER
+             // registering the hit with Analytics. Disabled because here want the
+             // link to open in a new window, so this hit can occur in the current tab.
+             //'hitCallback': function(){document.location = url;}
+           });
+        }
+
+        // convert tile coordinates to lat-lng
+        // from http://gis.stackexchange.com/questions/17278/calculate-lat-lon-bounds-for-individual-tile-generated-from-gdal2tiles
+        function tile2long(x,z) { return (x/Math.pow(2,z)*360-180); }
+        function tile2lat(y,z) {
+            var n=Math.PI-2*Math.PI*y/Math.pow(2,z);
+            return (180/Math.PI*Math.atan(0.5*(Math.exp(n)-Math.exp(-n))));
+        }
+
+        function long2tile(lon,zoom) { return (Math.floor((lon+180)/360*Math.pow(2,zoom))); }
+        function lat2tile(lat,zoom)  { return (Math.floor((1-Math.log(Math.tan(lat*Math.PI/180) + 1/Math.cos(lat*Math.PI/180))/Math.PI)/2 *Math.pow(2,zoom))); }
+
+        function mapzenTileURL() {
+            // find minimum max_zoom of all sources
+            var max_zoom = 16;
+            for (source in scene.config.sources) {
+                if (scene.config.sources.hasOwnProperty(source)) {
+                    if (scene.config.sources[source].max_zoom != "undefined") {
+                        max_zoom = Math.min(max_zoom, scene.config.sources[source].max_zoom);
+                    }
+                }
+            }
+            var zoom = max_zoom < map.getZoom() ? max_zoom : Math.floor(map.getZoom());
+            var tileCoords = { x : long2tile(latlng.lng,zoom), y: lat2tile(latlng.lat,zoom), z: zoom };
+
+            var url = 'http://tile.';
+            if( dev_or_prod == 'dev' ) {
+                url += 'dev.';
+            }
+            url += 'mapzen.com/mapzen/vector/v1/all/' + zoom + '/' + tileCoords.x  + '/' + tileCoords.y + '.topojson' + '?api_key=' + mapzen_api_key;
+            return url;
+        }
+
+        /***** Render loop *****/
+
+        // Create dat GUI
+
+
+        function inIframe () {
+            try {
+                return window.self !== window.top;
+            } catch (e) {
+                return true;
+            }
+        }
+
+        // Add map
+        window.addEventListener('load', function () {
+            // Scene initialized
+            layer.on('init', function() {
+                var camera = scene.config.cameras[scene.getActiveCamera()];
+                // if a camera position is set in the scene file, use that
+                if (defaultpos && typeof camera.position != "undefined") {
+                    map_start_location = [camera.position[1], camera.position[0], camera.position[2]]
+                }
+                map.setView([map_start_location[0], map_start_location[1]], map_start_location[2]);
+
+                if (!inIframe()) {
+                    addGUI();
+                }
+            });
+            if (!inIframe()) {
+                map.scrollWheelZoom.enable();
+                initFeatureSelection();
+            }
+
+            function addToMap () {
+                layer.addTo(map);
+            }
+        });
+
+        </script>
+
+
+
+  </body>
+</html>
